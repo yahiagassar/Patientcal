@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تطبيق حسابات المرضى</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+        }
+        form {
+            background: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        input[type="text"], input[type="number"], input[type="date"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #218838;
+        }
+        #clearButton {
+            background: #dc3545;
+        }
+        button#clearButton:hover {
+            background: #c82333;
+        }
+        .result {
+            background: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+            margin: 10px 0;
+        }
+        .btn-group {
+            display: flex;
+            gap: 5px;
+        }
+        .btn-group button {
+            flex: 1;
+            padding: 5px;
+            font-size: 12px;
+        }
+        .btn-group button.details-btn {
+            background: #ffc107;
+            color: black;
+        }
+        .btn-group button.details-btn:hover {
+            background: #e0a800;
+        }
+        #detailModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 50px;
+            overflow: auto;
+        }
+        #detailContent {
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            max-width: 600px; /* عرض أقصى للنافذة */
+            max-height: 80%;  /* ارتفاع أقصى للنافذة */
+            overflow-y: auto; /* تمكين التمرير إذا احتاج المحتوى */
+            margin: auto;     /* توسيط النافذة */
+        }
+        #modalContent {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>تطبيق حسابات المرضى</h1>
+    <form id="patientForm">
+        <input type="text" id="name" placeholder="اسم المريض" required>
+        <input type="text" id="phone" placeholder="رقم الهاتف" required>
+        <input type="number" id="amountDue" placeholder="المبلغ المستحق" required>
+        <input type="number" id="amountPaid" placeholder="المبلغ المدفوع" required>
+        <input type="text" id="receiptNumber" placeholder="رقم السند" required>
+        <input type="date" id="date" required>
+        <button type="submit" id="saveButton">حفظ بيانات المريض</button>
+        <button type="button" id="clearButton" onclick="clearFields()">إفراغ الحقول</button>
+    </form>
+
+    <h2>ابحث عن المريض</h2>
+    <input type="text" id="search" placeholder="ابحث عن اسم المريض" oninput="searchPatient()">
+    <button onclick="exportToExcel()">تصدير إلى Excel</button>
+    <div id="searchResult" class="result"></div>
+
+    <div id="patientList" class="result"></div>
+
+    <div id="detailModal">
+        <div id="detailContent">
+            <div id="modalContent"></div>
+            <button onclick="closeModal()">إغلاق</button>
+        </div>
+    </div>
+
+    <script>
+        let currentEditIndex = -1;
+
+        function loadPatients() {
+            return JSON.parse(localStorage.getItem('patients')) || [];
+        }
+
+        function displayPatients() {
+            const patients = loadPatients();
+            const patientList = document.getElementById('patientList');
+            patientList.innerHTML = '';
+
+            patients.forEach((patient, index) => {
+                const totalPaid = patient.payments.reduce((acc, pmt) => acc + parseFloat(pmt.amountPaid), 0);
+                const remaining = patient.amountDue - totalPaid;
+
+                patientList.innerHTML += `
+                    <div>
+                        <strong>اسم المريض:</strong> ${patient.name}<br>
+                        <strong>رقم الهاتف:</strong> ${patient.phone}<br>
+                        <strong>المبلغ المستحق:</strong> ${patient.amountDue} ريال<br>
+                        <strong>إجمالي المبلغ المدفوع:</strong> ${totalPaid} ريال<br>
+                        <strong>المبلغ المتبقي:</strong> ${remaining} ريال<br>
+                        <div class="btn-group">
+                            <button class="details-btn" onclick="showDetails(${index})">تفاصيل</button>
+                            <button onclick="editPatient(${index})">تعديل</button>
+                            <button onclick="deletePatient(${index})" style="background: #dc3545;">مسح</button>
+                        </div>
+                        <hr>
+                    </div>
+                `;
+            });
+        }
+
+        window.onload = displayPatients;
+
+        document.getElementById('patientForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const name = document.getElementById('name').value;
+            const phone = document.getElementById('phone').value;
+            const amountDue = parseFloat(document.getElementById('amountDue').value);
+            const amountPaid = parseFloat(document.getElementById('amountPaid').value);
+            const receiptNumber = document.getElementById('receiptNumber').value;
+            const date = document.getElementById('date').value;
+
+            let patients = loadPatients();
+            const patient = patients[currentEditIndex] || { payments: [] };
+
+            if (amountPaid > 0) {
+                patient.payments.push({ amountPaid, receiptNumber, date });
+            }
+
+            patient.name = name;
+            patient.phone = phone;
+            patient.amountDue = amountDue;
+            
+            if (currentEditIndex !== -1) {
+                patients[currentEditIndex] = patient;
+                currentEditIndex = -1;
+                document.getElementById('saveButton').innerText = 'حفظ بيانات المريض';
+            } else {
+                patients.push(patient);
+            }
+
+            localStorage.setItem('patients', JSON.stringify(patients));
+            displayPatients();
+
+            // إفراغ الحقول بعد الحفظ
+            clearFields(); 
+        });
+
+        function searchPatient() {
+            const searchValue = document.getElementById('search').value.toLowerCase();
+            const patients = loadPatients();
+            const searchResultDiv = document.getElementById('searchResult');
+            searchResultDiv.innerHTML = '';
+
+            const filteredPatients = patients.filter(patient => patient.name.toLowerCase().includes(searchValue));
+
+            if (filteredPatients.length > 0) {
+                filteredPatients.forEach((patient, index) => {
+                    const totalPaid = patient.payments.reduce((sum, payment) => sum + payment.amountPaid, 0);
+                    const remaining = patient.amountDue - totalPaid;
+
+                    searchResultDiv.innerHTML += `
+                        <div>
+                            <strong>اسم المريض:</strong> ${patient.name}<br>
+                            <strong>رقم الهاتف:</strong> ${patient.phone} 
+                            <button onclick="makeCall('${patient.phone}')" style="margin-left: 10px;">اتصال</button><br>
+                            <strong>المبلغ المستحق:</strong> ${patient.amountDue} ريال<br>
+                            <strong>إجمالي المبلغ المدفوع:</strong> ${totalPaid} ريال<br>
+                            <strong>المبلغ المتبقي:</strong> ${remaining} ريال<br>
+                            <div class="btn-group">
+                                <button class="details-btn" onclick="showDetails(${patients.indexOf(patient)})">تفاصيل</button>
+                                <button onclick="editPatient(${patients.indexOf(patient)})">تعديل</button>
+                                <button onclick="deletePatient(${patients.indexOf(patient)})" style="background: #dc3545;">مسح</button>
+                            </div>
+                            <hr>
+                        </div>
+                    `;
+                });
+            } else {
+                searchResultDiv.innerHTML = 'لم يتم العثور على نتائج';
+            }
+        }
+
+        function makeCall(phoneNumber) {
+            window.location.href = `tel:${phoneNumber}`;
+        }
+
+        function showDetails(index) {
+            const patient = loadPatients()[index];
+            const modalContent = document.getElementById('modalContent');
+            modalContent.innerHTML = `
+                <strong>اسم المريض:</strong> ${patient.name}<br>
+                <strong>رقم الهاتف:</strong> ${patient.phone}<br>
+            `;
+            patient.payments.forEach((payment, idx) => {
+                modalContent.innerHTML += `
+                    <strong>قسط ${idx + 1}:</strong> ${payment.amountPaid} ريال<br>
+                    <strong>التاريخ:</strong> ${payment.date}<br>
+                    <strong>رقم السند:</strong> ${payment.receiptNumber}<br>
+                    <button class="delete-button" onclick="deletePayment(${index}, ${idx})">حذف القسط</button>                
+                    <hr>
+                `;
+            });
+
+            document.getElementById('detailModal').style.display = 'block';
+        }
+  
+        function deletePayment(patientIndex, paymentIndex) {
+            let patients = loadPatients();
+            patients[patientIndex].payments.splice(paymentIndex, 1);
+            localStorage.setItem('patients', JSON.stringify(patients));
+            showDetails(patientIndex);
+        }
+  
+        function closeModal() {
+            document.getElementById('detailModal').style.display = 'none';
+        }
+
+        function editPatient(index) {
+            const patient = loadPatients()[index];
+            document.getElementById('name').value = patient.name;
+            document.getElementById('phone').value = patient.phone;
+            document.getElementById('amountDue').value = patient.amountDue;
+
+            currentEditIndex = index;
+            document.getElementById('saveButton').innerText = 'تحديث البيانات';
+        }
+
+        function deletePatient(index) {
+            let patients = loadPatients();
+            patients.splice(index, 1); // حذف المريض من المصفوفة
+            localStorage.setItem('patients', JSON.stringify(patients)); // تحديث التخزين المحلي
+            displayPatients(); // تحديث العرض
+        }
+
+        function clearFields() {
+            document.getElementById('patientForm').reset(); // إفراغ الحقول
+        }
+
+        function exportToExcel() {
+            const patients = loadPatients();
+            const worksheet = XLSX.utils.json_to_sheet(patients.map(patient => ({
+                "اسم المريض": patient.name,
+                "رقم الهاتف": patient.phone,
+                "المبلغ المستحق": patient.amountDue,
+                "إجمالي المبلغ المدفوع": patient.payments.reduce((sum, payment) => sum + payment.amountPaid, 0),
+                "المبلغ المتبقي": patient.amountDue - patient.payments.reduce((sum, payment) => sum + payment.amountPaid, 0),
+            })));
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "المرضى");
+
+            XLSX.writeFile(workbook, "http://storage/emulated/0/patients.xlsx");
+        }
+    </script>
+
+</body>
+</html>
